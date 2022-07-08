@@ -14,8 +14,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/floostack/transcoder"
-	"github.com/floostack/transcoder/utils"
+	"github.com/SumeruCCTV/transcoder"
+	"github.com/SumeruCCTV/transcoder/utils"
 )
 
 // Transcoder ...
@@ -40,11 +40,7 @@ func New(cfg *Config) transcoder.Transcoder {
 
 // Start ...
 func (t *Transcoder) Start() (<-chan transcoder.Progress, error) {
-
 	var stderrIn io.ReadCloser
-
-	out := make(chan transcoder.Progress)
-
 	defer t.closePipes()
 
 	// Validates config
@@ -101,7 +97,7 @@ func (t *Transcoder) Start() (<-chan transcoder.Progress, error) {
 		cmd = exec.CommandContext(*t.commandContext, t.config.FfmpegBinPath, args...)
 	}
 
-	// If progresss enabled, get stderr pipe and start progress process
+	// If progress is enabled, get stderr pipe and start progress process
 	if t.config.ProgressEnabled && !t.config.Verbose {
 		stderrIn, err = cmd.StderrPipe()
 		if err != nil {
@@ -120,19 +116,13 @@ func (t *Transcoder) Start() (<-chan transcoder.Progress, error) {
 	}
 
 	if t.config.ProgressEnabled && !t.config.Verbose {
-		go func() {
-			t.progress(stderrIn, out)
-		}()
-
-		go func() {
-			defer close(out)
-			err = cmd.Wait()
-		}()
-	} else {
-		err = cmd.Wait()
+		out := make(chan transcoder.Progress)
+		defer close(out)
+		go t.progress(stderrIn, out)
+		return out, cmd.Wait()
 	}
 
-	return out, nil
+	return nil, cmd.Wait()
 }
 
 // Input ...
@@ -149,7 +139,7 @@ func (t *Transcoder) Output(arg string) transcoder.Transcoder {
 
 // InputPipe ...
 func (t *Transcoder) InputPipe(w *io.WriteCloser, r *io.ReadCloser) transcoder.Transcoder {
-	if &t.input == nil {
+	if len(t.input) == 0 {
 		t.inputPipeWriter = w
 		t.inputPipeReader = r
 	}
@@ -158,7 +148,7 @@ func (t *Transcoder) InputPipe(w *io.WriteCloser, r *io.ReadCloser) transcoder.T
 
 // OutputPipe ...
 func (t *Transcoder) OutputPipe(w *io.WriteCloser, r *io.ReadCloser) transcoder.Transcoder {
-	if &t.output == nil {
+	if len(t.output) == 0 {
 		t.outputPipeWriter = w
 		t.outputPipeReader = r
 	}
@@ -267,7 +257,6 @@ func (t *Transcoder) GetMetadata() (transcoder.Metadata, error) {
 
 // progress sends through given channel the transcoding status
 func (t *Transcoder) progress(stream io.ReadCloser, out chan transcoder.Progress) {
-
 	defer stream.Close()
 
 	split := func(data []byte, atEOF bool) (advance int, token []byte, spliterror error) {
@@ -296,7 +285,7 @@ func (t *Transcoder) progress(stream io.ReadCloser, out chan transcoder.Progress
 	scanner.Buffer(buf, bufio.MaxScanTokenSize)
 
 	for scanner.Scan() {
-		Progress := new(Progress)
+		progress := new(Progress)
 		line := scanner.Text()
 
 		if strings.Contains(line, "time=") && strings.Contains(line, "bitrate=") {
@@ -338,15 +327,15 @@ func (t *Transcoder) progress(stream io.ReadCloser, out chan transcoder.Progress
 			timesec := utils.DurToSec(currentTime)
 			dursec, _ := strconv.ParseFloat(t.metadata.GetFormat().GetDuration(), 64)
 
-			progress := (timesec * 100) / dursec
-			Progress.Progress = progress
+			currentProgress := (timesec * 100) / dursec
+			progress.Progress = currentProgress
 
-			Progress.CurrentBitrate = currentBitrate
-			Progress.FramesProcessed = framesProcessed
-			Progress.CurrentTime = currentTime
-			Progress.Speed = currentSpeed
+			progress.CurrentBitrate = currentBitrate
+			progress.FramesProcessed = framesProcessed
+			progress.CurrentTime = currentTime
+			progress.Speed = currentSpeed
 
-			out <- *Progress
+			out <- *progress
 		}
 	}
 }
